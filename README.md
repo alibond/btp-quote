@@ -1,41 +1,53 @@
-# BTP Quotes Service
+# BTP Quotes Service — Vercel
 
-Webservice Python che scrapa automaticamente le quotazioni BTP da Borsa Italiana
-e le serve in formato JSON compatibile con Portfolio Performance.
+Webservice serverless per quotazioni BTP da Borsa Italiana, compatibile con Portfolio Performance.
 
-## Installazione (una tantum)
+## Deploy su Vercel (gratuito, senza carta)
 
-```bash
-pip install flask flask-cors playwright
-playwright install chromium
+### 1. Carica su GitHub
+Crea un repository pubblico su github.com e carica questi file:
+```
+btp-quotes-vercel/
+├── api/
+│   └── index.py
+├── requirements.txt
+├── vercel.json
+└── README.md
 ```
 
-## Avvio
+### 2. Collega a Vercel
+1. Vai su [vercel.com](https://vercel.com) → Sign up con il tuo account GitHub
+2. Clicca **Add New Project** → importa il repository
+3. Lascia tutte le impostazioni di default → clicca **Deploy**
+4. In 1-2 minuti ricevi un URL tipo `https://btp-quotes.vercel.app`
 
-```bash
-python app.py
-```
-
-Il servizio parte su http://localhost:5000
-
-## Configurazione Portfolio Performance
-
-Per ogni BTP nel portafoglio:
+### 3. Configura Portfolio Performance
+Per ogni BTP:
 1. Apri il titolo → tab **Quotazioni storiche**
-2. Clicca `+` → scegli **JSON Quote Feed**
+2. Clicca `+` → **JSON Quote Feed**
 3. Compila:
 
 | Campo | Valore |
 |---|---|
-| Feed URL | `http://localhost:5000/quotes?isin=IT0005634800` |
+| Feed URL | `https://btp-quotes.vercel.app/api/quotes?isin=IT0005634800` |
 | Path to Date | `$[*].date` |
 | Path to Close | `$[*].close` |
 
 Cambia solo l'ISIN per ogni BTP.
 
-## Come funziona
+## Note importanti
 
-- Prima chiamata: scrapa Borsa Italiana con un browser headless (Chromium)
-- Cache su disco: i dati vengono salvati in `data/IT0005634800.json`
-- Refresh automatico ogni ora
-- Aggiornamento forzato: `http://localhost:5000/refresh?isin=IT0005634800`
+- **Stateless**: Vercel non salva dati su disco. Il servizio restituisce
+  solo la quotazione del giorno corrente. Lo storico viene accumulato
+  automaticamente da Portfolio Performance nel suo database locale.
+- **Cold start**: la prima chiamata del giorno può impiegare 2-3 secondi
+  per avviare la funzione serverless.
+- **Limiti free**: Vercel free permette 100GB di banda e 100.000
+  invocazioni/mese — abbondantemente sufficienti per uso personale.
+
+## Endpoint
+
+| Endpoint | Descrizione |
+|---|---|
+| `GET /` | Info servizio e configurazione PP |
+| `GET /api/quotes?isin=IT0005634800` | Quotazione corrente in formato PP |
