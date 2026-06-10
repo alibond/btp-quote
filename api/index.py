@@ -1,12 +1,12 @@
 """
 Quotes Service — versione Vercel (serverless)
 Fonti supportate:
-  - BTP: scraping Borsa Italiana  -> /api/quotes?isin=IT0005634800
-  - Allianz Previdenza fondi      -> /api/allianz?linea=LINEA+AZIONARIA
+  - BTP:    scraping Borsa Italiana  -> /api/quotes?isin=IT0005634800
+  - Fondi:  scraping Teleborsa       -> /api/fondo?slug=allianz-previdenza-l-azionaria-alpfra05-RkMuQUxQRlJBMDU
 """
 
 import re
-from datetime import datetime
+from datetime import datetime, date
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests as req
@@ -15,31 +15,9 @@ from bs4 import BeautifulSoup
 app = Flask(__name__)
 CORS(app)
 
-HEADERS1 = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-
-
-  
-}
-
-
 HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer": "https://www.allianz.it/servizi/quotazioni-rendimenti.html",
-        "Origin": "https://www.allianz.it",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "it-IT,it;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
-        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 }
-
-
 
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 
@@ -51,7 +29,6 @@ def validate_isin(isin):
 # ---------------------------------------------------------------------------
 
 def parse_it_date(text: str) -> str:
-    """Converte '03/06/26' o '03/06/2026' in '2026-06-03'."""
     text = text.strip()
     for fmt in ("%d/%m/%y", "%d/%m/%Y"):
         try:
@@ -61,8 +38,13 @@ def parse_it_date(text: str) -> str:
     raise ValueError(f"Data non riconosciuta: {text}")
 
 def parse_it_price(text: str) -> float:
-    """Converte '34,648' in 34.648."""
-    return float(text.strip().replace(".", "").replace(",", "."))
+    # Gestisce sia "34,648" che "1.234,56"
+    text = text.strip()
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    else:
+        text = text.replace(",", ".")
+    return float(text)
 
 # ---------------------------------------------------------------------------
 # BTP — scraping Borsa Italiana
@@ -79,38 +61,40 @@ def scrape_btp(isin: str) -> float:
     return parse_it_price(el.get_text(strip=True))
 
 # ---------------------------------------------------------------------------
-# Allianz — API JSON
+# Fondi — scraping Teleborsa
 # ---------------------------------------------------------------------------
 
-ALLIANZ_URL = "https://ws.allianz.it/WSAllianz/quotazioni-rendimenti/fondiGestioniPrevidenza"
-
-def fetch_allianz(linea: str) -> dict:
+def scrape_teleborsa(slug: str) -> dict:
     """
-    Recupera quotazione di una linea Allianz Previdenza.
-    Cerca in tutti i table[].quotations la prima corrispondenza
-    con quote[0] == linea (case-insensitive).
+    Parametro slug: parte finale dell'URL Teleborsa del fondo.
+    Es: 'allianz-previdenza-l-azionaria-alpfra05-RkMuQUxQRlJBMDU'
     Ritorna { "date": "yyyy-MM-dd", "close": float }
     """
-    r = req.get(ALLIANZ_URL, headers=HEADERS, timeout=15)
+    url = f"https://www.teleborsa.it/fondi/{slug}"
+    r = req.get(url, headers=HEADERS, timeout=15)
     r.raise_for_status()
-    data = r.json()
+    soup = BeautifulSoup(r.text, "lxml")
 
-    linea_upper = linea.strip().upper()
+    # Prezzo: id fisso nel DOM di Teleborsa
+    el_price = soup.select_one("#ctl00_phContents_ctlHeader_lblPrice")
+    if not el_price:
+        raise RuntimeError(f"Prezzo non trovato per slug: {slug}")
+    price = parse_it_price(el_price.get_text(strip=True))
 
-    for table in data.get("tables", []):
-        for q in table.get("quotations", []):
-            quote = q.get("quote", [])
-            if not quote:
+    # Data: primo <strong> con formato dd/mm/yyyy
+    date_str = None
+    for tag in soup.find_all(string=re.compile(r'\d{2}/\d{2}/\d{4}')):
+        m = re.search(r'(\d{2}/\d{2}/\d{4})', tag)
+        if m:
+            try:
+                date_str = parse_it_date(m.group(1))
+                break
+            except ValueError:
                 continue
-            # Il nome del comparto è sempre il primo elemento (stringa)
-            name = quote[0] if isinstance(quote[0], str) else quote[0].get("text", "")
-            if name.strip().upper() == linea_upper:
-                date_str = parse_it_date(quote[1])
-                price    = parse_it_price(quote[2])
-                return {"date": date_str, "close": price}
+    if not date_str:
+        date_str = date.today().isoformat()
 
-    raise RuntimeError(f"Linea non trovata: '{linea}'. "
-                       f"Controlla il nome esatto (es. 'LINEA AZIONARIA').")
+    return {"date": date_str, "close": price}
 
 # ---------------------------------------------------------------------------
 # Endpoint
@@ -122,9 +106,9 @@ def index():
         "service": "Quotes Service",
         "endpoints": {
             "BTP": "/api/quotes?isin=IT0005634800",
-            "Allianz": "/api/allianz?linea=LINEA+AZIONARIA",
+            "Fondo (Teleborsa)": "/api/fondo?slug=allianz-previdenza-l-azionaria-alpfra05-RkMuQUxQRlJBMDU",
         },
-        "pp_config_btp": {
+        "pp_config": {
             "provider": "JSON Quote Feed",
             "path_to_date": "$[*].date",
             "path_to_close": "$[*].close",
@@ -145,32 +129,32 @@ def quotes():
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 
-    from datetime import date
     return jsonify([{"date": date.today().isoformat(), "close": price}])
 
 
-@app.route("/api/allianz")
-def allianz():
+@app.route("/api/fondo")
+def fondo():
     """
-    Quotazione corrente di una linea Allianz Previdenza.
+    Quotazione corrente di un fondo da Teleborsa.
 
-    Parametro: linea (nome esatto del comparto)
+    Parametro: slug (parte finale URL Teleborsa)
     Esempi:
-      /api/allianz?linea=LINEA+AZIONARIA
-      /api/allianz?linea=LINEA+FLESSIBILE+GARANZIA+REST.+CAPITALE
+      /api/fondo?slug=allianz-previdenza-l-azionaria-alpfra05-RkMuQUxQRlJBMDU
+      /api/fondo?slug=allianz-previdenza-l-flessibile-garanzia-rest-capitale-alpfrg01-RkMuQUxQRlJHMDE
 
     Configurazione Portfolio Performance:
       Provider:      JSON Quote Feed
-      Feed URL:      https://<dominio>/api/allianz?linea=LINEA+AZIONARIA
+      Feed URL:      https://<dominio>/api/fondo?slug=<slug>
       Path to Date:  $[*].date
       Path to Close: $[*].close
     """
-    linea = request.args.get("linea", "").strip()
-    if not linea:
-        return jsonify({"error": "Parametro 'linea' obbligatorio"}), 400
+    slug = request.args.get("slug", "").strip()
+    if not slug:
+        return jsonify({"error": "Parametro 'slug' obbligatorio"}), 400
     try:
-        result = fetch_allianz(linea)
+        result = scrape_teleborsa(slug)
     except Exception as e:
         return jsonify({"error": str(e)}), 502
 
     return jsonify([result])
+  
