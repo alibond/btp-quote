@@ -1,5 +1,5 @@
 """
-Quotes Service — versione Vercel (serverless)
+QuoteFeed — versione Vercel (serverless)
 Fonti supportate:
   - BTP:    scraping Borsa Italiana  -> /api/quotes?isin=IT0005634800
   - Fondi:  scraping Teleborsa       -> /api/fondo?slug=allianz-previdenza-l-azionaria-alpfra05-RkMuQUxQRlJBMDU
@@ -103,7 +103,7 @@ def scrape_teleborsa(slug: str) -> dict:
 @app.route("/")
 def index():
     return jsonify({
-        "service": "Quotes Service",
+        "service": "QuoteFeed",
         "endpoints": {
             "BTP": "/api/quotes?isin=IT0005634800",
             "Fondo (Teleborsa)": "/api/fondo?slug=allianz-previdenza-l-azionaria-alpfra05-RkMuQUxQRlJBMDU",
@@ -157,4 +157,3 @@ def fondo():
         return jsonify({"error": str(e)}), 502
 
     return jsonify([result])
-  
